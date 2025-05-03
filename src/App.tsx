@@ -15,6 +15,7 @@ import Contacts from "./pages/Contacts";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import AdminDashboard from "./pages/AdminDashboard";
+import { AdminBoats } from "./pages/admin";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import NotFound from "./pages/NotFound";
 
@@ -57,7 +58,7 @@ const App = () => (
               {/* Маршруты административной панели */}
               <Route path="/admin" element={<AdminDashboard />}>
                 <Route index element={<div>Обзор администратора</div>} />
-                <Route path="boats" element={<div>Управление лодками</div>} />
+                <Route path="boats" element={<AdminBoats />} />
                 <Route path="bookings" element={<div>Управление бронированиями</div>} />
                 <Route path="users" element={<div>Управление пользователями</div>} />
                 <Route path="reviews" element={<div>Управление отзывами</div>} />
