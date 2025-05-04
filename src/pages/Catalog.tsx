@@ -1,6 +1,6 @@
 
-import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { useState, useEffect, useMemo } from "react";
+import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,11 +8,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Checkbox } from "@/components/ui/checkbox";
 import Icon from "@/components/ui/icon";
-import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import CatalogHeader from "@/components/CatalogHeader";
 import BoatCard from "@/components/BoatCard";
+import Pagination from "@/components/Pagination";
+import ActiveFilters, { FilterItem } from "@/components/ActiveFilters";
 import { boats, BoatType } from "@/data/boats";
+import { useToast } from "@/components/ui/use-toast";
 
 type SortOption = "popular" | "priceAsc" | "priceDesc" | "newest";
 
@@ -23,19 +25,39 @@ interface Filters {
   capacity: number | null;
 }
 
+const ITEMS_PER_PAGE = 9;
+
 const Catalog = () => {
-  const [filteredBoats, setFilteredBoats] = useState<BoatType[]>(boats);
-  const [sortOption, setSortOption] = useState<SortOption>("popular");
-  const [viewType, setViewType] = useState<"grid" | "list">("grid");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  
+  // Получаем параметры из URL
+  const initialPage = parseInt(searchParams.get("page") || "1");
+  const initialSort = (searchParams.get("sort") as SortOption) || "popular";
+  const initialSearch = searchParams.get("search") || "";
+  const initialCategories = searchParams.get("categories")?.split(",").filter(Boolean) || [];
+  const initialCapacity = searchParams.get("capacity") ? parseInt(searchParams.get("capacity") || "0") : null;
   
   const minPrice = Math.min(...boats.map(boat => boat.price));
   const maxPrice = Math.max(...boats.map(boat => boat.price));
   
+  const initialMinPrice = parseInt(searchParams.get("minPrice") || minPrice.toString());
+  const initialMaxPrice = parseInt(searchParams.get("maxPrice") || maxPrice.toString());
+  
+  // Состояния для UI
+  const [filteredBoats, setFilteredBoats] = useState<BoatType[]>([]);
+  const [currentPage, setCurrentPage] = useState(initialPage);
+  const [sortOption, setSortOption] = useState<SortOption>(initialSort);
+  const [viewType, setViewType] = useState<"grid" | "list">("grid");
+  const [showFilters, setShowFilters] = useState(false);
+  
+  // Состояние фильтров
   const [filters, setFilters] = useState<Filters>({
-    searchQuery: "",
-    priceRange: [minPrice, maxPrice],
-    categories: [],
-    capacity: null,
+    searchQuery: initialSearch,
+    priceRange: [initialMinPrice, initialMaxPrice],
+    categories: initialCategories,
+    capacity: initialCapacity,
   });
 
   const categories = [
@@ -52,6 +74,7 @@ const Catalog = () => {
     { value: 8, label: "8+ человек" },
   ];
 
+  // Фильтрация лодок на основе фильтров
   useEffect(() => {
     let result = boats;
     
@@ -93,7 +116,7 @@ const Catalog = () => {
         result = [...result].sort((a, b) => b.price - a.price);
         break;
       case "newest":
-        result = [...result].sort((a, b) => new Date(b.year).getTime() - new Date(a.year).getTime());
+        result = [...result].sort((a, b) => b.id - a.id);
         break;
       case "popular":
       default:
@@ -102,8 +125,79 @@ const Catalog = () => {
     }
     
     setFilteredBoats(result);
+    
+    // При изменении фильтров сбрасываем на первую страницу
+    setCurrentPage(1);
+
+    // Обновляем URL с параметрами фильтрации
+    updateURLParams();
   }, [filters, sortOption]);
 
+  // Обновление URL при изменении страницы
+  useEffect(() => {
+    updateURLParams();
+  }, [currentPage]);
+
+  // Функция для обновления URL с параметрами
+  const updateURLParams = () => {
+    const params = new URLSearchParams();
+    
+    // Добавляем параметры только если они отличаются от значений по умолчанию
+    if (currentPage > 1) params.set("page", currentPage.toString());
+    if (sortOption !== "popular") params.set("sort", sortOption);
+    if (filters.searchQuery) params.set("search", filters.searchQuery);
+    if (filters.categories.length > 0) params.set("categories", filters.categories.join(","));
+    if (filters.capacity) params.set("capacity", filters.capacity.toString());
+    if (filters.priceRange[0] !== minPrice) params.set("minPrice", filters.priceRange[0].toString());
+    if (filters.priceRange[1] !== maxPrice) params.set("maxPrice", filters.priceRange[1].toString());
+    
+    setSearchParams(params);
+  };
+
+  // Вычисляем активные фильтры для отображения
+  const activeFilters = useMemo<FilterItem[]>(() => {
+    const result: FilterItem[] = [];
+    
+    if (filters.searchQuery) {
+      result.push({
+        id: "search",
+        label: "Поиск",
+        value: filters.searchQuery,
+        type: "search"
+      });
+    }
+    
+    if (filters.priceRange[0] !== minPrice || filters.priceRange[1] !== maxPrice) {
+      result.push({
+        id: "price",
+        label: "Цена",
+        value: filters.priceRange,
+        type: "price"
+      });
+    }
+    
+    filters.categories.forEach(categoryId => {
+      result.push({
+        id: `category-${categoryId}`,
+        label: "Категория",
+        value: categoryId,
+        type: "category"
+      });
+    });
+    
+    if (filters.capacity) {
+      result.push({
+        id: "capacity",
+        label: "Вместимость",
+        value: filters.capacity,
+        type: "capacity"
+      });
+    }
+    
+    return result;
+  }, [filters]);
+
+  // Обработчики изменения фильтров
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFilters(prev => ({ ...prev, searchQuery: e.target.value }));
   };
@@ -128,6 +222,27 @@ const Catalog = () => {
     }));
   };
 
+  // Обработчик удаления активного фильтра
+  const handleRemoveFilter = (filter: FilterItem) => {
+    switch (filter.type) {
+      case "search":
+        setFilters(prev => ({ ...prev, searchQuery: "" }));
+        break;
+      case "price":
+        setFilters(prev => ({ ...prev, priceRange: [minPrice, maxPrice] }));
+        break;
+      case "category":
+        setFilters(prev => ({
+          ...prev,
+          categories: prev.categories.filter(c => c !== filter.value)
+        }));
+        break;
+      case "capacity":
+        setFilters(prev => ({ ...prev, capacity: null }));
+        break;
+    }
+  };
+
   const resetFilters = () => {
     setFilters({
       searchQuery: "",
@@ -136,6 +251,27 @@ const Catalog = () => {
       capacity: null,
     });
     setSortOption("popular");
+    setCurrentPage(1);
+    
+    // Очищаем URL-параметры
+    navigate("/catalog");
+    
+    toast({
+      title: "Фильтры сброшены",
+      description: "Все параметры фильтрации были сброшены до значений по умолчанию",
+    });
+  };
+
+  // Пагинация
+  const totalPages = Math.ceil(filteredBoats.length / ITEMS_PER_PAGE);
+  const currentBoats = filteredBoats.slice(
+    (currentPage - 1) * ITEMS_PER_PAGE,
+    currentPage * ITEMS_PER_PAGE
+  );
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   return (
@@ -155,9 +291,25 @@ const Catalog = () => {
       </div>
 
       <div className="container mx-auto px-4 py-8">
+        {/* Заголовок и кнопка фильтров для мобильных */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 mb-1">Каталог моторных лодок</h1>
+            <p className="text-gray-600">Найдено {filteredBoats.length} лодок</p>
+          </div>
+          <Button 
+            variant="outline" 
+            className="mt-4 sm:mt-0 md:hidden"
+            onClick={() => setShowFilters(!showFilters)}
+          >
+            <Icon name="SlidersHorizontal" size={16} className="mr-2" />
+            {showFilters ? "Скрыть фильтры" : "Показать фильтры"}
+          </Button>
+        </div>
+
         <div className="flex flex-col md:flex-row gap-8">
           {/* Сайдбар с фильтрами */}
-          <div className="w-full md:w-64 shrink-0">
+          <div className={`w-full md:w-64 shrink-0 ${showFilters ? 'block' : 'hidden md:block'}`}>
             <Card>
               <CardContent className="p-6">
                 <div className="flex justify-between items-center mb-6">
@@ -175,11 +327,23 @@ const Catalog = () => {
                 {/* Поиск */}
                 <div className="mb-6">
                   <h3 className="text-sm font-medium mb-2">Поиск</h3>
-                  <Input 
-                    placeholder="Название или описание" 
-                    value={filters.searchQuery}
-                    onChange={handleSearchChange}
-                  />
+                  <div className="relative">
+                    <Input 
+                      placeholder="Название или описание" 
+                      value={filters.searchQuery}
+                      onChange={handleSearchChange}
+                    />
+                    {filters.searchQuery && (
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="absolute right-0 top-0 h-full" 
+                        onClick={() => setFilters(prev => ({ ...prev, searchQuery: "" }))}
+                      >
+                        <Icon name="X" size={16} />
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
                 <Separator className="my-4" />
@@ -255,57 +419,60 @@ const Catalog = () => {
 
           {/* Основной контент */}
           <div className="flex-1">
-            {/* Заголовок и сортировка */}
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900 mb-1">Каталог моторных лодок</h1>
-                <p className="text-gray-600">Найдено {filteredBoats.length} лодок</p>
+            {/* Сортировка и вид отображения */}
+            <div className="flex justify-between items-center mb-6">
+              <div className="flex-1 min-w-[180px]">
+                <Select value={sortOption} onValueChange={(value) => setSortOption(value as SortOption)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Сортировка" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="popular">По популярности</SelectItem>
+                    <SelectItem value="priceAsc">По возрастанию цены</SelectItem>
+                    <SelectItem value="priceDesc">По убыванию цены</SelectItem>
+                    <SelectItem value="newest">Сначала новые</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-
-              <div className="flex items-center gap-4 mt-4 sm:mt-0">
-                <div className="flex-1 min-w-[180px]">
-                  <Select value={sortOption} onValueChange={(value) => setSortOption(value as SortOption)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Сортировка" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="popular">По популярности</SelectItem>
-                      <SelectItem value="priceAsc">По возрастанию цены</SelectItem>
-                      <SelectItem value="priceDesc">По убыванию цены</SelectItem>
-                      <SelectItem value="newest">Сначала новые</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                <div className="flex border rounded overflow-hidden">
-                  <Button
-                    variant={viewType === "grid" ? "default" : "ghost"}
-                    size="icon"
-                    onClick={() => setViewType("grid")}
-                    className="rounded-none"
-                  >
-                    <Icon name="LayoutGrid" size={18} />
-                  </Button>
-                  <Button
-                    variant={viewType === "list" ? "default" : "ghost"}
-                    size="icon"
-                    onClick={() => setViewType("list")}
-                    className="rounded-none"
-                  >
-                    <Icon name="List" size={18} />
-                  </Button>
-                </div>
+              
+              <div className="flex border rounded overflow-hidden ml-4">
+                <Button
+                  variant={viewType === "grid" ? "default" : "ghost"}
+                  size="icon"
+                  onClick={() => setViewType("grid")}
+                  className="rounded-none"
+                >
+                  <Icon name="LayoutGrid" size={18} />
+                </Button>
+                <Button
+                  variant={viewType === "list" ? "default" : "ghost"}
+                  size="icon"
+                  onClick={() => setViewType("list")}
+                  className="rounded-none"
+                >
+                  <Icon name="List" size={18} />
+                </Button>
               </div>
             </div>
 
+            {/* Активные фильтры */}
+            {activeFilters.length > 0 && (
+              <ActiveFilters 
+                filters={activeFilters}
+                onRemoveFilter={handleRemoveFilter}
+                onResetAll={resetFilters}
+                categories={categories}
+              />
+            )}
+
             {/* Список лодок */}
-            {filteredBoats.length > 0 ? (
+            {currentBoats.length > 0 ? (
               <div className={
                 viewType === "grid" 
                 ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6" 
                 : "space-y-4"
               }>
-                {filteredBoats.map(boat => (
+                {currentBoats.map(boat => (
                   <BoatCard 
                     key={boat.id} 
                     boat={boat} 
@@ -321,6 +488,17 @@ const Catalog = () => {
                   Попробуйте изменить параметры фильтрации
                 </p>
                 <Button onClick={resetFilters}>Сбросить фильтры</Button>
+              </div>
+            )}
+
+            {/* Пагинация */}
+            {filteredBoats.length > ITEMS_PER_PAGE && (
+              <div className="mt-8">
+                <Pagination 
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  onPageChange={handlePageChange}
+                />
               </div>
             )}
           </div>
