@@ -1,46 +1,32 @@
 
-import { useState, useEffect } from "react";
-import { format } from "date-fns";
-import { ru } from "date-fns/locale";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { useToast } from "@/components/ui/use-toast";
-import { api } from "@/lib/api";
-import { Booking } from "@/types/api.types";
 import Icon from "@/components/ui/icon";
-import { useBoats } from "@/hooks/useBoats";
+import BookingExport from "@/components/admin/BookingExport";
 
-// Статусы бронирований и их цвета
-const BOOKING_STATUSES = {
-  pending: { label: "Ожидает подтверждения", color: "bg-yellow-100 text-yellow-800" },
-  confirmed: { label: "Подтверждено", color: "bg-green-100 text-green-800" },
-  cancelled: { label: "Отменено", color: "bg-red-100 text-red-800" },
-  completed: { label: "Завершено", color: "bg-blue-100 text-blue-800" }
-};
+// Статусы бронирований
+const BOOKING_STATUSES = [
+  { value: "all", label: "Все статусы" },
+  { value: "pending", label: "Ожидает" },
+  { value: "confirmed", label: "Подтверждено" },
+  { value: "cancelled", label: "Отменено" },
+  { value: "completed", label: "Завершено" }
+];
 
-export default function AdminBookings() {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
+const AdminBookings = () => {
+  // Состояние для фильтров
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string | null>(null);
-  const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
-  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [showExport, setShowExport] = useState(false);
 
-  // Получение списка бронирований
-  const {
-    data: bookingsData,
-    isLoading,
-    error,
-    refetch
-  } = useQuery({
+  // Получение данных о бронированиях
+  const { data: bookings = [], isLoading } = useQuery({
     queryKey: ['admin-bookings'],
     queryFn: async () => {
       const response = await api.bookings.getAll();
@@ -51,347 +37,206 @@ export default function AdminBookings() {
     }
   });
 
-  // Получение лодок для отображения информации
-  const { boats } = useBoats();
-
-  // Мутация для обновления статуса бронирования
-  const updateStatusMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: number; status: string }) => {
-      return api.bookings.updateStatus(id, status);
-    },
-    onSuccess: () => {
-      toast({
-        title: "Статус обновлен",
-        description: "Статус бронирования успешно обновлен",
-      });
-      queryClient.invalidateQueries({ queryKey: ['admin-bookings'] });
-      setIsDetailsOpen(false);
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Ошибка",
-        description: error.message || "Не удалось обновить статус",
-        variant: "destructive",
-      });
-    }
-  });
-
-  // Обработчик обновления статуса
-  const handleUpdateStatus = (status: string) => {
-    if (!selectedBooking) return;
-    updateStatusMutation.mutate({ id: selectedBooking.id, status });
-  };
-
   // Фильтрация бронирований
-  const filteredBookings = bookingsData ? bookingsData.filter((booking: Booking) => {
+  const filteredBookings = bookings.filter((booking: any) => {
+    // Фильтр по поисковому запросу
     const matchesSearch = searchQuery === "" || 
-      booking.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      booking.clientEmail.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (booking.clientPhone && booking.clientPhone.includes(searchQuery));
+      booking.clientName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      booking.clientEmail?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      booking.boatName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      booking.id?.toString().includes(searchQuery);
     
-    const matchesStatus = !statusFilter || booking.status === statusFilter;
+    // Фильтр по статусу
+    const matchesStatus = statusFilter === "all" || booking.status === statusFilter;
     
     return matchesSearch && matchesStatus;
-  }) : [];
-
-  // Функция для получения названия лодки по идентификатору
-  const getBoatName = (boatId: number) => {
-    const boat = boats.find(b => b.id === boatId);
-    return boat ? boat.name : `Лодка #${boatId}`;
-  };
+  });
 
   // Функция для форматирования даты
-  const formatDate = (dateStr: string) => {
-    try {
-      return format(new Date(dateStr), "d MMMM yyyy", { locale: ru });
-    } catch (error) {
-      return dateStr;
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
+  };
+
+  // Функция для получения цвета статуса
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "pending": return "bg-yellow-100 text-yellow-800";
+      case "confirmed": return "bg-green-100 text-green-800";
+      case "cancelled": return "bg-red-100 text-red-800";
+      case "completed": return "bg-blue-100 text-blue-800";
+      default: return "bg-gray-100 text-gray-800";
     }
+  };
+
+  // Функция для получения названия статуса на русском
+  const getStatusLabel = (status: string) => {
+    const statusObj = BOOKING_STATUSES.find(s => s.value === status);
+    return statusObj ? statusObj.label : status;
   };
 
   return (
     <div className="space-y-6">
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>
-            {error instanceof Error ? error.message : "Произошла ошибка при загрузке бронирований"}
-          </AlertDescription>
-        </Alert>
-      )}
-      
-      <Tabs defaultValue="all">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
-          <TabsList>
-            <TabsTrigger value="all">Все бронирования</TabsTrigger>
-            <TabsTrigger value="pending">Ожидающие</TabsTrigger>
-            <TabsTrigger value="confirmed">Подтвержденные</TabsTrigger>
-            <TabsTrigger value="completed">Завершенные</TabsTrigger>
-          </TabsList>
-          
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Input 
-                placeholder="Поиск бронирований..." 
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="md:w-60"
-              />
-              {searchQuery && (
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  className="absolute right-0 top-0 h-full" 
-                  onClick={() => setSearchQuery("")}
-                >
-                  <Icon name="X" size={16} />
-                </Button>
-              )}
-            </div>
-            
-            <Select value={statusFilter || ""} onValueChange={(value) => setStatusFilter(value || null)}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Статус" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">Все статусы</SelectItem>
-                <SelectItem value="pending">Ожидающие</SelectItem>
-                <SelectItem value="confirmed">Подтвержденные</SelectItem>
-                <SelectItem value="cancelled">Отмененные</SelectItem>
-                <SelectItem value="completed">Завершенные</SelectItem>
-              </SelectContent>
-            </Select>
+      {showExport ? (
+        <>
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-semibold">Экспорт бронирований</h2>
+            <Button variant="outline" onClick={() => setShowExport(false)}>
+              <Icon name="ArrowLeft" className="mr-2" size={16} />
+              Вернуться к списку
+            </Button>
           </div>
-        </div>
-
-        <TabsContent value="all" className="space-y-4">
+          <BookingExport />
+        </>
+      ) : (
+        <>
+          {/* Заголовок и кнопки */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <h2 className="text-xl font-semibold">Управление бронированиями</h2>
+            <div className="flex gap-2">
+              <Button onClick={() => setShowExport(true)}>
+                <Icon name="FileDown" className="mr-2" size={16} />
+                Экспорт данных
+              </Button>
+            </div>
+          </div>
+          
+          {/* Фильтры */}
           <Card>
-            <CardContent className="p-0">
-              {isLoading ? (
-                <div className="flex justify-center items-center p-6">
-                  <Icon name="Loader2" className="mr-2 animate-spin" size={20} />
-                  Загрузка бронирований...
+            <CardContent className="p-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <Input
+                    placeholder="Поиск по имени, email, ID..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full"
+                    icon="Search"
+                  />
                 </div>
-              ) : filteredBookings.length === 0 ? (
-                <div className="text-center p-6">
-                  <Icon name="Calendar" className="mx-auto mb-2" size={32} />
-                  <h3 className="text-lg font-medium">Бронирования не найдены</h3>
-                  <p className="text-muted-foreground">
-                    {searchQuery || statusFilter
-                      ? "Попробуйте изменить параметры поиска или фильтры"
-                      : "Пока нет бронирований в системе"}
-                  </p>
+                
+                <div>
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Фильтр по статусу" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {BOOKING_STATUSES.map(status => (
+                        <SelectItem key={status.value} value={status.value}>
+                          {status.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div className="flex justify-end">
+                  <Button 
+                    variant="outline" 
+                    onClick={() => {
+                      setSearchQuery("");
+                      setStatusFilter("all");
+                    }}
+                  >
+                    Сбросить фильтры
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          
+          {/* Список бронирований */}
+          <Tabs defaultValue="all">
+            <TabsList>
+              <TabsTrigger value="all">Все бронирования</TabsTrigger>
+              <TabsTrigger value="pending">Ожидающие</TabsTrigger>
+              <TabsTrigger value="confirmed">Подтвержденные</TabsTrigger>
+              <TabsTrigger value="completed">Завершенные</TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="all" className="mt-4">
+              {isLoading ? (
+                <div className="flex justify-center items-center p-8">
+                  <Icon name="Loader2" className="mr-2 animate-spin" size={20} />
+                  Загрузка данных...
+                </div>
+              ) : filteredBookings.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="bg-muted">
+                        <th className="p-3 text-left">ID</th>
+                        <th className="p-3 text-left">Клиент</th>
+                        <th className="p-3 text-left">Лодка</th>
+                        <th className="p-3 text-left">Период</th>
+                        <th className="p-3 text-left">Сумма</th>
+                        <th className="p-3 text-left">Статус</th>
+                        <th className="p-3 text-center">Действия</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredBookings.map((booking: any) => (
+                        <tr key={booking.id} className="border-b hover:bg-muted/50">
+                          <td className="p-3">{booking.id}</td>
+                          <td className="p-3">
+                            <div className="font-medium">{booking.clientName}</div>
+                            <div className="text-sm text-muted-foreground">{booking.clientEmail}</div>
+                          </td>
+                          <td className="p-3">{booking.boatName}</td>
+                          <td className="p-3 whitespace-nowrap">
+                            {formatDate(booking.startDate)} - {formatDate(booking.endDate)}
+                          </td>
+                          <td className="p-3 font-medium">{booking.totalPrice.toLocaleString()} ₽</td>
+                          <td className="p-3">
+                            <span className={`inline-block px-2 py-1 rounded-full text-xs ${getStatusColor(booking.status)}`}>
+                              {getStatusLabel(booking.status)}
+                            </span>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex justify-center gap-2">
+                              <Button variant="ghost" size="icon" title="Просмотр">
+                                <Icon name="Eye" size={16} />
+                              </Button>
+                              <Button variant="ghost" size="icon" title="Редактировать">
+                                <Icon name="Pencil" size={16} />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>ID</TableHead>
-                      <TableHead>Лодка</TableHead>
-                      <TableHead>Клиент</TableHead>
-                      <TableHead>Даты</TableHead>
-                      <TableHead>Статус</TableHead>
-                      <TableHead>Цена</TableHead>
-                      <TableHead className="text-right">Действия</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredBookings.map((booking: Booking) => (
-                      <TableRow key={booking.id}>
-                        <TableCell className="font-medium">{booking.id}</TableCell>
-                        <TableCell>{getBoatName(booking.boatId)}</TableCell>
-                        <TableCell>
-                          <div>
-                            <div className="font-medium">{booking.clientName}</div>
-                            <div className="text-xs text-muted-foreground">{booking.clientEmail}</div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm">
-                            <div>{formatDate(booking.startDate)}</div>
-                            <div>{formatDate(booking.endDate)}</div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge className={BOOKING_STATUSES[booking.status as keyof typeof BOOKING_STATUSES].color}>
-                            {BOOKING_STATUSES[booking.status as keyof typeof BOOKING_STATUSES].label}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{booking.totalPrice.toLocaleString()} ₽</TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => {
-                              setSelectedBooking(booking);
-                              setIsDetailsOpen(true);
-                            }}
-                          >
-                            <Icon name="Eye" size={16} />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-        
-        {/* Заглушки для других вкладок */}
-        <TabsContent value="pending">
-          <Card>
-            <CardContent className="p-6">
-              <div className="text-center">
-                <p>Здесь будут отображаться ожидающие бронирования</p>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-        
-        <TabsContent value="confirmed">
-          <Card>
-            <CardContent className="p-6">
-              <div className="text-center">
-                <p>Здесь будут отображаться подтвержденные бронирования</p>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-        
-        <TabsContent value="completed">
-          <Card>
-            <CardContent className="p-6">
-              <div className="text-center">
-                <p>Здесь будут отображаться завершенные бронирования</p>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-
-      {/* Диалог с подробной информацией о бронировании */}
-      <Dialog open={isDetailsOpen} onOpenChange={setIsDetailsOpen}>
-        <DialogContent className="sm:max-w-[600px]">
-          <DialogHeader>
-            <DialogTitle>Информация о бронировании #{selectedBooking?.id}</DialogTitle>
-          </DialogHeader>
-
-          {selectedBooking && (
-            <div className="space-y-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <h4 className="text-sm font-medium text-muted-foreground mb-1">Лодка</h4>
-                  <p className="font-medium">{getBoatName(selectedBooking.boatId)}</p>
-                </div>
-                <div>
-                  <h4 className="text-sm font-medium text-muted-foreground mb-1">Статус</h4>
-                  <Badge className={BOOKING_STATUSES[selectedBooking.status as keyof typeof BOOKING_STATUSES].color}>
-                    {BOOKING_STATUSES[selectedBooking.status as keyof typeof BOOKING_STATUSES].label}
-                  </Badge>
-                </div>
-                <div>
-                  <h4 className="text-sm font-medium text-muted-foreground mb-1">Дата начала</h4>
-                  <p>{formatDate(selectedBooking.startDate)}</p>
-                </div>
-                <div>
-                  <h4 className="text-sm font-medium text-muted-foreground mb-1">Дата окончания</h4>
-                  <p>{formatDate(selectedBooking.endDate)}</p>
-                </div>
-                <div>
-                  <h4 className="text-sm font-medium text-muted-foreground mb-1">Стоимость</h4>
-                  <p className="font-medium">{selectedBooking.totalPrice.toLocaleString()} ₽</p>
-                </div>
-                <div>
-                  <h4 className="text-sm font-medium text-muted-foreground mb-1">Дата бронирования</h4>
-                  <p>{formatDate(selectedBooking.createdAt)}</p>
-                </div>
-              </div>
-
-              <div>
-                <h4 className="text-sm font-medium text-muted-foreground mb-2">Информация о клиенте</h4>
-                <div className="bg-muted p-3 rounded-md">
-                  <div className="space-y-1">
-                    <p className="font-medium">{selectedBooking.clientName}</p>
-                    <p className="text-sm">Email: {selectedBooking.clientEmail}</p>
-                    {selectedBooking.clientPhone && (
-                      <p className="text-sm">Телефон: {selectedBooking.clientPhone}</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {selectedBooking.comments && (
-                <div>
-                  <h4 className="text-sm font-medium text-muted-foreground mb-2">Комментарии</h4>
-                  <div className="bg-muted p-3 rounded-md">
-                    <p className="text-sm">{selectedBooking.comments}</p>
-                  </div>
+                <div className="text-center py-8 bg-muted/20 rounded-lg">
+                  <Icon name="FileSearch" size={40} className="mx-auto mb-2 text-muted-foreground" />
+                  <h3 className="text-lg font-medium">Бронирования не найдены</h3>
+                  <p className="text-muted-foreground">Попробуйте изменить параметры фильтрации</p>
                 </div>
               )}
-
-              <div>
-                <h4 className="text-sm font-medium text-muted-foreground mb-2">Изменить статус</h4>
-                <div className="flex gap-2 flex-wrap">
-                  {(selectedBooking.status === "pending" || selectedBooking.status === "cancelled") && (
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      className="bg-green-50 text-green-700 hover:bg-green-100"
-                      onClick={() => handleUpdateStatus("confirmed")}
-                    >
-                      <Icon name="Check" className="mr-1" size={14} />
-                      Подтвердить
-                    </Button>
-                  )}
-                  
-                  {selectedBooking.status === "pending" && (
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      className="bg-red-50 text-red-700 hover:bg-red-100"
-                      onClick={() => handleUpdateStatus("cancelled")}
-                    >
-                      <Icon name="X" className="mr-1" size={14} />
-                      Отменить
-                    </Button>
-                  )}
-                  
-                  {selectedBooking.status === "confirmed" && (
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      className="bg-blue-50 text-blue-700 hover:bg-blue-100"
-                      onClick={() => handleUpdateStatus("completed")}
-                    >
-                      <Icon name="CheckCheck" className="mr-1" size={14} />
-                      Завершить
-                    </Button>
-                  )}
-                  
-                  {selectedBooking.status === "confirmed" && (
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      className="bg-red-50 text-red-700 hover:bg-red-100"
-                      onClick={() => handleUpdateStatus("cancelled")}
-                    >
-                      <Icon name="X" className="mr-1" size={14} />
-                      Отменить
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex justify-end mt-4">
-                <Button variant="outline" onClick={() => setIsDetailsOpen(false)}>
-                  Закрыть
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            </TabsContent>
+            
+            <TabsContent value="pending" className="mt-4">
+              {/* Содержимое для вкладки "Ожидающие" */}
+              {/* Аналогично вкладке "all", но с предустановленным фильтром */}
+            </TabsContent>
+            
+            <TabsContent value="confirmed" className="mt-4">
+              {/* Содержимое для вкладки "Подтвержденные" */}
+            </TabsContent>
+            
+            <TabsContent value="completed" className="mt-4">
+              {/* Содержимое для вкладки "Завершенные" */}
+            </TabsContent>
+          </Tabs>
+        </>
+      )}
     </div>
   );
-}
+};
+
+export default AdminBookings;
